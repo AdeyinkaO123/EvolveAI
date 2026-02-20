@@ -1,11 +1,15 @@
 import os
 import asyncio
 import random
-from fastapi import FastAPI, Form
+import json
+import io
+from fastapi import FastAPI, Form, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
+import PyPDF2
+import docx
 
 load_dotenv()
 
@@ -59,6 +63,18 @@ AVATAR_COLORS = [
 ]
 
 
+# ─── File extraction helpers ───────────────────────────────────────────────────
+
+def extract_text_from_pdf(file_bytes: bytes) -> str:
+    reader = PyPDF2.PdfReader(io.BytesIO(file_bytes))
+    return "\n".join(page.extract_text() or "" for page in reader.pages)
+
+
+def extract_text_from_docx(file_bytes: bytes) -> str:
+    document = docx.Document(io.BytesIO(file_bytes))
+    return "\n".join(p.text for p in document.paragraphs)
+
+
 # ─── Core persona generation ───────────────────────────────────────────────────
 
 async def generate_single_persona(
@@ -100,7 +116,6 @@ Give your honest feedback and star rating (1-5). Respond in this exact JSON form
         response_format={"type": "json_object"},
     )
 
-    import json
     data = json.loads(response.choices[0].message.content)
 
     return {
@@ -166,8 +181,43 @@ async def generate_from_text(
     count: int = Form(20),
     start_index: int = Form(0),
 ):
+    """Generate personas from plain text input."""
     if not text.strip():
         return JSONResponse(status_code=400, content={"error": "Text input is required."})
+
+    personas = await generate_personas_batch(text, count=count, start_index=start_index)
+    return {"personas": personas, "total": len(personas)}
+
+
+@app.post("/generate-from-file")
+async def generate_from_file(
+    name: str = Form(...),
+    email: str = Form(...),
+    file: UploadFile = File(...),
+    count: int = Form(20),
+    start_index: int = Form(0),
+):
+    """Generate personas from an uploaded file (PDF, DOCX, TXT)."""
+    file_bytes = await file.read()
+    filename = file.filename.lower()
+
+    if filename.endswith(".pdf"):
+        text = extract_text_from_pdf(file_bytes)
+    elif filename.endswith(".docx"):
+        text = extract_text_from_docx(file_bytes)
+    elif filename.endswith(".txt"):
+        text = file_bytes.decode("utf-8", errors="ignore")
+    else:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Unsupported file type. Please upload a PDF, DOCX, or TXT file."}
+        )
+
+    if not text.strip():
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Could not extract any text from this file."}
+        )
 
     personas = await generate_personas_batch(text, count=count, start_index=start_index)
     return {"personas": personas, "total": len(personas)}
