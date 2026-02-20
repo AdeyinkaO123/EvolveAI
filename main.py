@@ -10,6 +10,8 @@ from dotenv import load_dotenv
 from openai import AsyncOpenAI
 import PyPDF2
 import docx
+import httpx
+from bs4 import BeautifulSoup
 
 load_dotenv()
 
@@ -73,6 +75,27 @@ def extract_text_from_pdf(file_bytes: bytes) -> str:
 def extract_text_from_docx(file_bytes: bytes) -> str:
     document = docx.Document(io.BytesIO(file_bytes))
     return "\n".join(p.text for p in document.paragraphs)
+
+
+async def extract_text_from_url(url: str) -> str:
+    """Fetch a URL and extract clean readable text using BeautifulSoup."""
+    async with httpx.AsyncClient(timeout=15, follow_redirects=True) as http:
+        resp = await http.get(
+            url,
+            headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"}
+        )
+        resp.raise_for_status()
+
+    soup = BeautifulSoup(resp.text, "html.parser")
+
+    # Remove noise tags
+    for tag in soup(["script", "style", "nav", "footer", "header", "aside"]):
+        tag.decompose()
+
+    text = soup.get_text(separator="\n", strip=True)
+
+    # Trim to a reasonable size for the LLM
+    return text[:6000]
 
 
 # ─── Core persona generation ───────────────────────────────────────────────────
@@ -217,6 +240,38 @@ async def generate_from_file(
         return JSONResponse(
             status_code=400,
             content={"error": "Could not extract any text from this file."}
+        )
+
+    personas = await generate_personas_batch(text, count=count, start_index=start_index)
+    return {"personas": personas, "total": len(personas)}
+
+
+@app.post("/generate-from-url")
+async def generate_from_url(
+    name: str = Form(...),
+    email: str = Form(...),
+    url: str = Form(...),
+    count: int = Form(20),
+    start_index: int = Form(0),
+):
+    """Generate personas by scraping a URL."""
+    try:
+        text = await extract_text_from_url(url)
+    except httpx.HTTPStatusError as e:
+        return JSONResponse(
+            status_code=400,
+            content={"error": f"Could not fetch URL — server returned {e.response.status_code}."}
+        )
+    except Exception as e:
+        return JSONResponse(
+            status_code=400,
+            content={"error": f"Could not fetch URL: {str(e)}"}
+        )
+
+    if not text.strip():
+        return JSONResponse(
+            status_code=400,
+            content={"error": "No readable content found at that URL."}
         )
 
     personas = await generate_personas_batch(text, count=count, start_index=start_index)
