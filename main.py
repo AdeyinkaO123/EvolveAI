@@ -10,8 +10,7 @@ from dotenv import load_dotenv
 from openai import AsyncOpenAI
 import PyPDF2
 import docx
-import httpx
-from bs4 import BeautifulSoup
+from browser_agent import browse_product_url, format_browser_context
 
 load_dotenv()
 
@@ -75,27 +74,6 @@ def extract_text_from_pdf(file_bytes: bytes) -> str:
 def extract_text_from_docx(file_bytes: bytes) -> str:
     document = docx.Document(io.BytesIO(file_bytes))
     return "\n".join(p.text for p in document.paragraphs)
-
-
-async def extract_text_from_url(url: str) -> str:
-    """Fetch a URL and extract clean readable text using BeautifulSoup."""
-    async with httpx.AsyncClient(timeout=15, follow_redirects=True) as http:
-        resp = await http.get(
-            url,
-            headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"}
-        )
-        resp.raise_for_status()
-
-    soup = BeautifulSoup(resp.text, "html.parser")
-
-    # Remove noise tags
-    for tag in soup(["script", "style", "nav", "footer", "header", "aside"]):
-        tag.decompose()
-
-    text = soup.get_text(separator="\n", strip=True)
-
-    # Trim to a reasonable size for the LLM
-    return text[:6000]
 
 
 # ─── Core persona generation ───────────────────────────────────────────────────
@@ -254,28 +232,39 @@ async def generate_from_url(
     count: int = Form(20),
     start_index: int = Form(0),
 ):
-    """Generate personas by scraping a URL."""
+    """
+    Generate personas by deeply browsing a URL with Playwright.
+    Scrolls full page, visits subpages, clicks CTAs.
+    """
     try:
-        text = await extract_text_from_url(url)
-    except httpx.HTTPStatusError as e:
-        return JSONResponse(
-            status_code=400,
-            content={"error": f"Could not fetch URL — server returned {e.response.status_code}."}
-        )
+        browse_result = await browse_product_url(url)
     except Exception as e:
         return JSONResponse(
             status_code=400,
-            content={"error": f"Could not fetch URL: {str(e)}"}
+            content={"error": f"Browser agent failed: {str(e)}"}
         )
 
-    if not text.strip():
+    if not browse_result.get("full_text_summary", "").strip():
         return JSONResponse(
             status_code=400,
             content={"error": "No readable content found at that URL."}
         )
 
-    personas = await generate_personas_batch(text, count=count, start_index=start_index)
-    return {"personas": personas, "total": len(personas)}
+    product_context = format_browser_context(browse_result)
+
+    personas = await generate_personas_batch(product_context, count=count, start_index=start_index)
+
+    return {
+        "personas": personas,
+        "total": len(personas),
+        "pages_visited": browse_result.get("pages_visited", []),
+        "browse_summary": {
+            "headlines": browse_result.get("headlines", [])[:5],
+            "ctas": browse_result.get("ctas", [])[:5],
+            "pricing_found": len(browse_result.get("pricing", [])) > 0,
+            "pages": browse_result.get("pages_visited", []),
+        },
+    }
 
 
 # ─── Run ──────────────────────────────────────────────────────────────────────
