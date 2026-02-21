@@ -107,7 +107,8 @@ You are aware of alternatives like {competitors}.
 {f'As a {segment}, you specifically care about: {segment_context}' if segment_context else ''}
 
 Give honest, specific, realistic feedback. Reference real concerns a person like you would have.
-Vary your sentiment — not everyone will be impressed. Some personas should be critical or skeptical.
+Vary your sentiment realistically — aim for a natural distribution: roughly 40% positive or enthusiastic,
+35% constructive or mixed, and 25% critical or skeptical. Not every persona should be negative.
 Write in first person, 2-4 sentences. Avoid generic phrases."""
 
     user_prompt = f"""Product information you reviewed:
