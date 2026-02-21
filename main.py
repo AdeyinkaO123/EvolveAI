@@ -1,16 +1,15 @@
 import os
 import asyncio
 import random
-import json
 import io
 from fastapi import FastAPI, Form, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
-from openai import AsyncOpenAI
 import PyPDF2
 import docx
 from browser_agent import browse_product_url, format_browser_context
+from research_agent import research_competitive_landscape, generate_persona_with_research
 
 load_dotenv()
 
@@ -23,8 +22,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # ─── Persona pools ─────────────────────────────────────────────────────────────
 
@@ -76,65 +73,19 @@ def extract_text_from_docx(file_bytes: bytes) -> str:
     return "\n".join(p.text for p in document.paragraphs)
 
 
-# ─── Core persona generation ───────────────────────────────────────────────────
+# ─── Core pipeline ─────────────────────────────────────────────────────────────
 
-async def generate_single_persona(
-    persona_name: str,
-    segment: str,
-    tone: str,
-    color: str,
-    product_context: str,
-    persona_index: int,
-) -> dict:
-    system_prompt = f"""You are {persona_name}, a {segment} who is {tone}.
-You are giving honest, realistic feedback about a product you just evaluated.
-Your feedback should feel human — include specific observations, a mix of praise and critique,
-and reflect your persona mindset. Write in first person, 2-4 sentences.
-Do NOT use generic phrases like "overall great product". Be specific to what you read.
-Vary your sentiment naturally — not every persona loves the product."""
-
-    user_prompt = f"""Here is the product information you reviewed:
-
----
-{product_context[:3000]}
----
-
-Give your honest feedback and star rating (1-5). Respond in this exact JSON format:
-{{
-  "feedback": "your feedback here",
-  "rating": <number 1-5>,
-  "sentiment": "<Positive|Constructive|Neutral|Enthusiastic|Critical>"
-}}"""
-
-    response = await client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
-        temperature=0.9,
-        max_tokens=200,
-        response_format={"type": "json_object"},
-    )
-
-    data = json.loads(response.choices[0].message.content)
-
-    return {
-        "id": persona_index,
-        "name": persona_name,
-        "color": color,
-        "segment": segment,
-        "feedback": data.get("feedback", "No feedback generated."),
-        "rating": max(1, min(5, int(data.get("rating", 3)))),
-        "sentiment": data.get("sentiment", "Neutral"),
-    }
-
-
-async def generate_personas_batch(
+async def run_pipeline(
     product_context: str,
     count: int = 20,
     start_index: int = 0,
 ) -> list:
+    """
+    Full pipeline:
+    1. Research competitive landscape (one OpenAI call)
+    2. Generate all personas concurrently with competitive context baked in
+    """
+
     names = random.sample(PERSONA_NAMES, min(count, len(PERSONA_NAMES)))
     if count > len(names):
         names += random.choices(PERSONA_NAMES, k=count - len(names))
@@ -143,13 +94,20 @@ async def generate_personas_batch(
     tones = random.choices(TONES, k=count)
     colors = [AVATAR_COLORS[(start_index + i) % len(AVATAR_COLORS)] for i in range(count)]
 
+    # Step 1: Research competitors once for all personas
+    print("Running competitive research...")
+    competitive_intel = await research_competitive_landscape(product_context, segments)
+    print(f"Competitors identified: {competitive_intel.get('competitors', [])}")
+
+    # Step 2: Generate all personas concurrently
     tasks = [
-        generate_single_persona(
+        generate_persona_with_research(
             persona_name=names[i],
             segment=segments[i],
             tone=tones[i],
             color=colors[i],
             product_context=product_context,
+            competitive_intel=competitive_intel,
             persona_index=start_index + i,
         )
         for i in range(count)
@@ -186,7 +144,7 @@ async def generate_from_text(
     if not text.strip():
         return JSONResponse(status_code=400, content={"error": "Text input is required."})
 
-    personas = await generate_personas_batch(text, count=count, start_index=start_index)
+    personas = await run_pipeline(text, count=count, start_index=start_index)
     return {"personas": personas, "total": len(personas)}
 
 
@@ -220,7 +178,7 @@ async def generate_from_file(
             content={"error": "Could not extract any text from this file."}
         )
 
-    personas = await generate_personas_batch(text, count=count, start_index=start_index)
+    personas = await run_pipeline(text, count=count, start_index=start_index)
     return {"personas": personas, "total": len(personas)}
 
 
@@ -232,10 +190,7 @@ async def generate_from_url(
     count: int = Form(20),
     start_index: int = Form(0),
 ):
-    """
-    Generate personas by deeply browsing a URL with Playwright.
-    Scrolls full page, visits subpages, clicks CTAs.
-    """
+    """Generate personas by deeply browsing a URL with Playwright."""
     try:
         browse_result = await browse_product_url(url)
     except Exception as e:
@@ -251,13 +206,11 @@ async def generate_from_url(
         )
 
     product_context = format_browser_context(browse_result)
-
-    personas = await generate_personas_batch(product_context, count=count, start_index=start_index)
+    personas = await run_pipeline(product_context, count=count, start_index=start_index)
 
     return {
         "personas": personas,
         "total": len(personas),
-        "pages_visited": browse_result.get("pages_visited", []),
         "browse_summary": {
             "headlines": browse_result.get("headlines", [])[:5],
             "ctas": browse_result.get("ctas", [])[:5],
