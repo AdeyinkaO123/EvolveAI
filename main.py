@@ -2,7 +2,7 @@ import os
 import asyncio
 import random
 import io
-from fastapi import FastAPI, Form, UploadFile, File
+from fastapi import FastAPI, Form, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
@@ -10,6 +10,7 @@ import PyPDF2
 import docx
 from browser_agent import browse_product_url, format_browser_context
 from research_agent import research_competitive_landscape, generate_persona_with_research
+from interview_agent import generate_auto_interview
 
 load_dotenv()
 
@@ -22,6 +23,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ─── In-memory session store ───────────────────────────────────────────────────
+# Holds persona data and product context between requests
+# so the interview feature can reference them later
+_persona_store: dict = {}
+_product_context_store: dict = {}
 
 # ─── Persona pools ─────────────────────────────────────────────────────────────
 
@@ -61,7 +68,7 @@ AVATAR_COLORS = [
 ]
 
 
-# ─── File extraction helpers ───────────────────────────────────────────────────
+# ─── Helpers ───────────────────────────────────────────────────────────────────
 
 def extract_text_from_pdf(file_bytes: bytes) -> str:
     reader = PyPDF2.PdfReader(io.BytesIO(file_bytes))
@@ -73,19 +80,22 @@ def extract_text_from_docx(file_bytes: bytes) -> str:
     return "\n".join(p.text for p in document.paragraphs)
 
 
-# ─── Core pipeline ─────────────────────────────────────────────────────────────
+def make_session_id(name: str, email: str) -> str:
+    return f"{name.lower().replace(' ', '_')}_{email.lower().split('@')[0]}"
+
 
 async def run_pipeline(
     product_context: str,
     count: int = 20,
     start_index: int = 0,
+    session_id: str = None,
 ) -> list:
     """
     Full pipeline:
     1. Research competitive landscape (one OpenAI call)
     2. Generate all personas concurrently with competitive context baked in
+    3. Store personas in memory for interview feature
     """
-
     names = random.sample(PERSONA_NAMES, min(count, len(PERSONA_NAMES)))
     if count > len(names):
         names += random.choices(PERSONA_NAMES, k=count - len(names))
@@ -94,12 +104,10 @@ async def run_pipeline(
     tones = random.choices(TONES, k=count)
     colors = [AVATAR_COLORS[(start_index + i) % len(AVATAR_COLORS)] for i in range(count)]
 
-    # Step 1: Research competitors once for all personas
     print("Running competitive research...")
     competitive_intel = await research_competitive_landscape(product_context, segments)
     print(f"Competitors identified: {competitive_intel.get('competitors', [])}")
 
-    # Step 2: Generate all personas concurrently
     tasks = [
         generate_persona_with_research(
             persona_name=names[i],
@@ -120,6 +128,9 @@ async def run_pipeline(
         if isinstance(r, Exception):
             print(f"Persona {start_index + i} failed: {r}")
         else:
+            # Store each persona for interview access
+            if session_id:
+                _persona_store[f"{session_id}_{r['id']}"] = r
             personas.append(r)
 
     return personas
@@ -140,12 +151,13 @@ async def generate_from_text(
     count: int = Form(20),
     start_index: int = Form(0),
 ):
-    """Generate personas from plain text input."""
     if not text.strip():
         return JSONResponse(status_code=400, content={"error": "Text input is required."})
 
-    personas = await run_pipeline(text, count=count, start_index=start_index)
-    return {"personas": personas, "total": len(personas)}
+    session_id = make_session_id(name, email)
+    _product_context_store[session_id] = text
+    personas = await run_pipeline(text, count=count, start_index=start_index, session_id=session_id)
+    return {"personas": personas, "total": len(personas), "session_id": session_id}
 
 
 @app.post("/generate-from-file")
@@ -156,7 +168,6 @@ async def generate_from_file(
     count: int = Form(20),
     start_index: int = Form(0),
 ):
-    """Generate personas from an uploaded file (PDF, DOCX, TXT)."""
     file_bytes = await file.read()
     filename = file.filename.lower()
 
@@ -178,8 +189,10 @@ async def generate_from_file(
             content={"error": "Could not extract any text from this file."}
         )
 
-    personas = await run_pipeline(text, count=count, start_index=start_index)
-    return {"personas": personas, "total": len(personas)}
+    session_id = make_session_id(name, email)
+    _product_context_store[session_id] = text
+    personas = await run_pipeline(text, count=count, start_index=start_index, session_id=session_id)
+    return {"personas": personas, "total": len(personas), "session_id": session_id}
 
 
 @app.post("/generate-from-url")
@@ -190,7 +203,6 @@ async def generate_from_url(
     count: int = Form(20),
     start_index: int = Form(0),
 ):
-    """Generate personas by deeply browsing a URL with Playwright."""
     try:
         browse_result = await browse_product_url(url)
     except Exception as e:
@@ -206,17 +218,43 @@ async def generate_from_url(
         )
 
     product_context = format_browser_context(browse_result)
-    personas = await run_pipeline(product_context, count=count, start_index=start_index)
+    session_id = make_session_id(name, email)
+    _product_context_store[session_id] = product_context
+    personas = await run_pipeline(product_context, count=count, start_index=start_index, session_id=session_id)
 
     return {
         "personas": personas,
         "total": len(personas),
+        "session_id": session_id,
         "browse_summary": {
             "headlines": browse_result.get("headlines", [])[:5],
             "ctas": browse_result.get("ctas", [])[:5],
             "pricing_found": len(browse_result.get("pricing", [])) > 0,
             "pages": browse_result.get("pages_visited", []),
         },
+    }
+
+
+@app.post("/interview/auto")
+async def auto_interview(
+    session_id: str = Form(...),
+    persona_id: int = Form(...),
+):
+    """Generate a 5-question auto interview for a specific persona."""
+    key = f"{session_id}_{persona_id}"
+    persona = _persona_store.get(key)
+    product_context = _product_context_store.get(session_id)
+
+    if not persona:
+        raise HTTPException(status_code=404, detail="Persona not found. Make sure session_id and persona_id are correct.")
+    if not product_context:
+        raise HTTPException(status_code=404, detail="Session not found.")
+
+    qa_pairs = await generate_auto_interview(persona, product_context)
+    return {
+        "persona_id": persona_id,
+        "persona_name": persona["name"],
+        "qa": qa_pairs,
     }
 
 

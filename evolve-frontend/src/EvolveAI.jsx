@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 const API_BASE = "http://localhost:8000";
 
@@ -24,74 +24,188 @@ function AvatarIcon({ name, color, size = 56 }) {
   );
 }
 
-function PersonaCard({ persona, index }) {
-  const [expanded, setExpanded] = useState(false);
+// ─── Auto Interview Modal ─────────────────────────────────────────────────────
+
+function AutoInterviewModal({ persona, sessionId, onClose }) {
+  const [qa, setQa] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    const fd = new FormData();
+    fd.append("session_id", sessionId);
+    fd.append("persona_id", persona.id);
+    fetch(`${API_BASE}/interview/auto`, { method: "POST", body: fd })
+      .then(r => r.json())
+      .then(d => {
+        if (d.detail) throw new Error(d.detail);
+        setQa(d.qa);
+      })
+      .catch(e => setError(e.message))
+      .finally(() => setLoading(false));
+  }, []);
+
   const color = persona.color || AVATAR_COLORS[persona.id % AVATAR_COLORS.length];
 
   return (
     <div style={{
-      display: "flex", gap: 20, padding: "20px 24px",
-      background: index % 2 === 0 ? "#12122a" : "#0e0e22",
-      borderRadius: 16, border: "1px solid #ffffff0f",
-      animation: "fadeSlideUp 0.4s ease both",
-      animationDelay: `${Math.min(index * 0.04, 0.8)}s`,
-      transition: "border-color 0.2s",
-    }}
-      onMouseEnter={e => e.currentTarget.style.borderColor = `${color}50`}
-      onMouseLeave={e => e.currentTarget.style.borderColor = "#ffffff0f"}
-    >
-      {/* Left: avatar + name + stars */}
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, minWidth: 70 }}>
-        <AvatarIcon name={persona.name} color={color} />
-        <span style={{
-          fontFamily: "'DM Sans', sans-serif", fontSize: 11, color: "#ffffff60",
-          textAlign: "center", lineHeight: 1.3, fontWeight: 500
-        }}>
-          {persona.name}
-        </span>
-        <div style={{ display: "flex", gap: 2 }}>
-          {[...Array(5)].map((_, i) => (
-            <span key={i} style={{ color: i < persona.rating ? "#E8C547" : "#ffffff15", fontSize: 10 }}>★</span>
-          ))}
-        </div>
-      </div>
+      position: "fixed", inset: 0, background: "#000000cc", zIndex: 100,
+      display: "flex", alignItems: "center", justifyContent: "center", padding: 20
+    }} onClick={onClose}>
+      <div style={{
+        background: "#0e0e22", border: "1px solid #ffffff15", borderRadius: 20,
+        padding: 32, maxWidth: 620, width: "100%", maxHeight: "80vh", overflowY: "auto",
+        animation: "fadeSlideUp 0.3s ease",
+      }} onClick={e => e.stopPropagation()}>
 
-      {/* Right: feedback + tags */}
-      <div style={{ flex: 1 }}>
-        <div style={{
-          fontFamily: "'Lora', serif", fontSize: 14, color: "#e8e8f0",
-          lineHeight: 1.7, fontStyle: "italic",
-          display: expanded ? "block" : "-webkit-box",
-          WebkitLineClamp: expanded ? "unset" : 4,
-          WebkitBoxOrient: "vertical",
-          overflow: expanded ? "visible" : "hidden",
-        }}>
-          "{persona.feedback}"
+        {/* Header */}
+        <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 24 }}>
+          <AvatarIcon name={persona.name} color={color} size={44} />
+          <div>
+            <div style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, color: "#fff", fontSize: 16 }}>
+              {persona.name}
+            </div>
+            <div style={{ fontSize: 12, color: "#ffffff50" }}>{persona.segment} · Auto Interview</div>
+          </div>
+          <button onClick={onClose} style={{ marginLeft: "auto", background: "none", border: "none", color: "#ffffff40", cursor: "pointer", fontSize: 20 }}>✕</button>
         </div>
-        {persona.feedback?.length > 200 && (
-          <button onClick={() => setExpanded(!expanded)} style={{
-            marginTop: 6, background: "none", border: "none", cursor: "pointer",
-            color: "#E8C547", fontSize: 12, fontFamily: "'DM Sans', sans-serif", padding: 0,
-          }}>
-            {expanded ? "Show less" : "Read more"}
-          </button>
+
+        {/* Content */}
+        {loading && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            {[...Array(5)].map((_, i) => (
+              <div key={i} style={{ height: 60, background: "#ffffff08", borderRadius: 10, animation: "pulse 1.5s ease infinite" }} />
+            ))}
+          </div>
         )}
-        <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <span style={{
-            fontSize: 11, padding: "3px 10px", borderRadius: 20,
-            background: "#E8C54715", color: "#E8C547",
-            fontFamily: "'DM Sans', sans-serif", fontWeight: 500,
-          }}>{persona.segment}</span>
-          <span style={{
-            fontSize: 11, padding: "3px 10px", borderRadius: 20,
-            background: "#6BCFB015", color: "#6BCFB0",
-            fontFamily: "'DM Sans', sans-serif", fontWeight: 500,
-          }}>{persona.sentiment}</span>
-        </div>
+
+        {error && (
+          <div style={{ color: "#F07070", fontSize: 14, padding: "12px 16px", background: "#F0707015", borderRadius: 10 }}>
+            ⚠ {error}
+          </div>
+        )}
+
+        {qa && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+            {qa.map((item, i) => (
+              <div key={i}>
+                <div style={{ fontSize: 12, color: "#E8C547", fontFamily: "'DM Sans', sans-serif", fontWeight: 600, marginBottom: 6 }}>
+                  Q: {item.question}
+                </div>
+                <div style={{
+                  fontSize: 14, color: "#e8e8f0", fontFamily: "'Lora', serif",
+                  fontStyle: "italic", lineHeight: 1.6,
+                  paddingLeft: 12, borderLeft: `2px solid ${color}40`
+                }}>
+                  "{item.answer}"
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
 }
+
+// ─── Persona Card ─────────────────────────────────────────────────────────────
+
+function PersonaCard({ persona, index, sessionId }) {
+  const [expanded, setExpanded] = useState(false);
+  const [showInterview, setShowInterview] = useState(false);
+  const color = persona.color || AVATAR_COLORS[persona.id % AVATAR_COLORS.length];
+
+  return (
+    <>
+      <div style={{
+        display: "flex", gap: 20, padding: "20px 24px",
+        background: index % 2 === 0 ? "#12122a" : "#0e0e22",
+        borderRadius: 16, border: "1px solid #ffffff0f",
+        animation: "fadeSlideUp 0.4s ease both",
+        animationDelay: `${Math.min(index * 0.04, 0.8)}s`,
+        transition: "border-color 0.2s",
+      }}
+        onMouseEnter={e => e.currentTarget.style.borderColor = `${color}50`}
+        onMouseLeave={e => e.currentTarget.style.borderColor = "#ffffff0f"}
+      >
+        {/* Left: avatar + name + stars */}
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, minWidth: 70 }}>
+          <AvatarIcon name={persona.name} color={color} />
+          <span style={{
+            fontFamily: "'DM Sans', sans-serif", fontSize: 11, color: "#ffffff60",
+            textAlign: "center", lineHeight: 1.3, fontWeight: 500,
+          }}>{persona.name}</span>
+          <div style={{ display: "flex", gap: 2 }}>
+            {[...Array(5)].map((_, i) => (
+              <span key={i} style={{ color: i < persona.rating ? "#E8C547" : "#ffffff15", fontSize: 10 }}>★</span>
+            ))}
+          </div>
+        </div>
+
+        {/* Right: feedback + tags + interview button */}
+        <div style={{ flex: 1 }}>
+          <div style={{
+            fontFamily: "'Lora', serif", fontSize: 14, color: "#e8e8f0",
+            lineHeight: 1.7, fontStyle: "italic",
+            display: expanded ? "block" : "-webkit-box",
+            WebkitLineClamp: expanded ? "unset" : 4,
+            WebkitBoxOrient: "vertical",
+            overflow: expanded ? "visible" : "hidden",
+          }}>
+            "{persona.feedback}"
+          </div>
+          {persona.feedback?.length > 200 && (
+            <button onClick={() => setExpanded(!expanded)} style={{
+              marginTop: 6, background: "none", border: "none", cursor: "pointer",
+              color: "#E8C547", fontSize: 12, fontFamily: "'DM Sans', sans-serif", padding: 0,
+            }}>
+              {expanded ? "Show less" : "Read more"}
+            </button>
+          )}
+
+          <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <span style={{
+              fontSize: 11, padding: "3px 10px", borderRadius: 20,
+              background: "#E8C54715", color: "#E8C547",
+              fontFamily: "'DM Sans', sans-serif", fontWeight: 500,
+            }}>{persona.segment}</span>
+            <span style={{
+              fontSize: 11, padding: "3px 10px", borderRadius: 20,
+              background: "#6BCFB015", color: "#6BCFB0",
+              fontFamily: "'DM Sans', sans-serif", fontWeight: 500,
+            }}>{persona.sentiment}</span>
+
+            {/* Auto interview button — only shows when session exists */}
+            {sessionId && (
+              <button
+                onClick={() => setShowInterview(true)}
+                style={{
+                  marginLeft: "auto", fontSize: 11, padding: "4px 12px", borderRadius: 8,
+                  background: "none", border: "1px solid #ffffff15", color: "#ffffff50",
+                  cursor: "pointer", fontFamily: "'DM Sans', sans-serif", transition: "all 0.2s",
+                }}
+                onMouseEnter={e => { e.currentTarget.style.borderColor = "#E8C547"; e.currentTarget.style.color = "#E8C547"; }}
+                onMouseLeave={e => { e.currentTarget.style.borderColor = "#ffffff15"; e.currentTarget.style.color = "#ffffff50"; }}
+              >
+                📋 Auto Q&A
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {showInterview && (
+        <AutoInterviewModal
+          persona={persona}
+          sessionId={sessionId}
+          onClose={() => setShowInterview(false)}
+        />
+      )}
+    </>
+  );
+}
+
+// ─── Loading Skeletons ────────────────────────────────────────────────────────
 
 function LoadingSkeletons({ count = 5 }) {
   return Array.from({ length: count }).map((_, i) => (
@@ -113,6 +227,8 @@ function LoadingSkeletons({ count = 5 }) {
   ));
 }
 
+// ─── Main App ─────────────────────────────────────────────────────────────────
+
 export default function EvolveAI() {
   const [form, setForm] = useState({ name: "", email: "", inputType: "text", text: "", link: "" });
   const [file, setFile] = useState(null);
@@ -121,6 +237,7 @@ export default function EvolveAI() {
   const [submitted, setSubmitted] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState(null);
+  const [sessionId, setSessionId] = useState(null);
 
   const inputStyle = {
     width: "100%", background: "#080818", border: "1px solid #ffffff15",
@@ -155,6 +272,7 @@ export default function EvolveAI() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Something went wrong");
       setPersonas(data.personas);
+      setSessionId(data.session_id);
       setSubmitted(true);
     } catch (e) {
       setError(e.message);
@@ -235,8 +353,6 @@ export default function EvolveAI() {
           {/* Form */}
           {!submitted && (
             <div style={{ background: "#0e0e22", border: "1px solid #ffffff10", borderRadius: 20, padding: "36px 36px 32px", marginBottom: 40, animation: "fadeSlideUp 0.5s ease 0.1s both" }}>
-
-              {/* Name + Email */}
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 20 }}>
                 <div>
                   <label style={{ display: "block", fontSize: 12, color: "#ffffff50", marginBottom: 8, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase" }}>Full Name</label>
@@ -248,7 +364,6 @@ export default function EvolveAI() {
                 </div>
               </div>
 
-              {/* Input type tabs */}
               <div style={{ marginBottom: 16 }}>
                 <label style={{ display: "block", fontSize: 12, color: "#ffffff50", marginBottom: 10, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase" }}>Product Input</label>
                 <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
@@ -269,7 +384,6 @@ export default function EvolveAI() {
                     placeholder="Describe your product, paste your landing page copy, or summarize what you're launching..." rows={5}
                     style={{ ...inputStyle, resize: "vertical", lineHeight: 1.6, padding: "14px" }} />
                 )}
-
                 {form.inputType === "file" && (
                   <div onClick={() => document.getElementById("fileInput").click()}
                     style={{ border: "2px dashed #ffffff15", borderRadius: 12, padding: "40px 20px", textAlign: "center", cursor: "pointer", transition: "border-color 0.2s", background: file ? "#E8C54708" : "transparent" }}
@@ -277,26 +391,22 @@ export default function EvolveAI() {
                     onMouseLeave={e => e.currentTarget.style.borderColor = "#ffffff15"}>
                     <input id="fileInput" type="file" accept=".pdf,.docx,.txt" style={{ display: "none" }} onChange={e => setFile(e.target.files[0])} />
                     <div style={{ fontSize: 28, marginBottom: 10 }}>📎</div>
-                    {file
-                      ? <span style={{ color: "#E8C547", fontSize: 14 }}>{file.name}</span>
+                    {file ? <span style={{ color: "#E8C547", fontSize: 14 }}>{file.name}</span>
                       : <span style={{ color: "#ffffff30", fontSize: 14 }}>Click to attach your file (PDF, DOCX, TXT)</span>}
                   </div>
                 )}
-
                 {form.inputType === "link" && (
                   <input value={form.link} onChange={e => setForm({ ...form, link: e.target.value })}
                     placeholder="https://yourproduct.com" style={inputStyle} />
                 )}
               </div>
 
-              {/* Error */}
               {error && (
                 <div style={{ marginBottom: 16, padding: "12px 16px", background: "#F0707015", border: "1px solid #F0707040", borderRadius: 10, color: "#F07070", fontSize: 13 }}>
                   ⚠ {error}
                 </div>
               )}
 
-              {/* Submit */}
               <div style={{ display: "flex", justifyContent: "flex-end" }}>
                 <button onClick={handleSubmit} disabled={loading || !canSubmit} style={{
                   padding: "13px 32px", borderRadius: 12,
@@ -316,12 +426,7 @@ export default function EvolveAI() {
             </div>
           )}
 
-          {/* Loading skeletons */}
-          {loading && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              <LoadingSkeletons count={6} />
-            </div>
-          )}
+          {loading && <div style={{ display: "flex", flexDirection: "column", gap: 12 }}><LoadingSkeletons count={6} /></div>}
 
           {/* Results */}
           {submitted && !loading && (
@@ -331,9 +436,9 @@ export default function EvolveAI() {
                   <h2 style={{ fontFamily: "'Lora', serif", fontSize: 22, color: "#ffffff", marginBottom: 4 }}>
                     {personas.length} Customer Personas
                   </h2>
-                  <p style={{ fontSize: 13, color: "#ffffff40" }}>AI-generated feedback based on your product input</p>
+                  <p style={{ fontSize: 13, color: "#ffffff40" }}>Click 📋 Auto Q&A on any card to run a 5-question interview</p>
                 </div>
-                <button onClick={() => { setSubmitted(false); setPersonas([]); setError(null); }} style={{
+                <button onClick={() => { setSubmitted(false); setPersonas([]); setError(null); setSessionId(null); }} style={{
                   padding: "8px 16px", background: "none", border: "1px solid #ffffff15",
                   borderRadius: 8, color: "#ffffff50", cursor: "pointer",
                   fontSize: 13, fontFamily: "'DM Sans', sans-serif",
@@ -341,7 +446,9 @@ export default function EvolveAI() {
               </div>
 
               <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                {personas.map((p, i) => <PersonaCard key={p.id} persona={p} index={i} />)}
+                {personas.map((p, i) => (
+                  <PersonaCard key={p.id} persona={p} index={i} sessionId={sessionId} />
+                ))}
                 {generating && <LoadingSkeletons count={3} />}
               </div>
 
@@ -351,13 +458,11 @@ export default function EvolveAI() {
                 </div>
               )}
 
-              {/* Generate more */}
               <div style={{ textAlign: "center", marginTop: 32 }}>
                 <button onClick={handleGenerateMore} disabled={generating} style={{
                   padding: "14px 40px", borderRadius: 12,
                   background: generating ? "#ffffff08" : "#0e0e22",
-                  border: "1px solid #E8C54740",
-                  color: generating ? "#ffffff30" : "#E8C547",
+                  border: "1px solid #E8C54740", color: generating ? "#ffffff30" : "#E8C547",
                   fontSize: 14, fontWeight: 600, cursor: generating ? "not-allowed" : "pointer",
                   fontFamily: "'DM Sans', sans-serif", transition: "all 0.2s",
                 }}>
