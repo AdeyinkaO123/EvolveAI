@@ -11,7 +11,7 @@ import PyPDF2
 import docx
 from browser_agent import browse_product_url, format_browser_context
 from research_agent import research_competitive_landscape, generate_persona_with_research
-from interview_agent import generate_auto_interview, chat_with_persona
+from interview_agent import chat_with_persona
 
 load_dotenv()
 
@@ -212,24 +212,6 @@ async def generate_from_url(
             "pages": browse_result.get("pages_visited", []),
         },
     }
-
-
-@app.post("/interview/auto")
-async def auto_interview(
-    session_id: str = Form(...),
-    persona_id: int = Form(...),
-):
-    key = f"{session_id}_{persona_id}"
-    persona = _persona_store.get(key)
-    product_context = _product_context_store.get(session_id)
-
-    if not persona:
-        raise HTTPException(status_code=404, detail="Persona not found.")
-    if not product_context:
-        raise HTTPException(status_code=404, detail="Session not found.")
-
-    qa_pairs = await generate_auto_interview(persona, product_context)
-    return {"persona_id": persona_id, "persona_name": persona["name"], "qa": qa_pairs}
 
 
 class ChatMessage(BaseModel):

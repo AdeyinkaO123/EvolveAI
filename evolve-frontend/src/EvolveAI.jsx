@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useRef } from "react";
 
 const API_BASE = "http://localhost:8000";
 
@@ -20,58 +20,6 @@ function AvatarIcon({ name, color, size = 56 }) {
       boxShadow: `0 0 0 3px #1a1a2e, 0 0 0 5px ${color}40`
     }}>
       {initials}
-    </div>
-  );
-}
-
-// ─── Auto Interview Modal ─────────────────────────────────────────────────────
-
-function AutoInterviewModal({ persona, sessionId, onClose }) {
-  const [qa, setQa] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const color = persona.color || AVATAR_COLORS[persona.id % AVATAR_COLORS.length];
-
-  useEffect(() => {
-    const fd = new FormData();
-    fd.append("session_id", sessionId);
-    fd.append("persona_id", persona.id);
-    fetch(`${API_BASE}/interview/auto`, { method: "POST", body: fd })
-      .then(r => r.json())
-      .then(d => { if (d.detail) throw new Error(d.detail); setQa(d.qa); })
-      .catch(e => setError(e.message))
-      .finally(() => setLoading(false));
-  }, []);
-
-  return (
-    <div style={{ position: "fixed", inset: 0, background: "#000000cc", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onClick={onClose}>
-      <div style={{ background: "#0e0e22", border: "1px solid #ffffff15", borderRadius: 20, padding: 32, maxWidth: 620, width: "100%", maxHeight: "80vh", overflowY: "auto", animation: "fadeSlideUp 0.3s ease" }} onClick={e => e.stopPropagation()}>
-        <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 24 }}>
-          <AvatarIcon name={persona.name} color={color} size={44} />
-          <div>
-            <div style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, color: "#fff", fontSize: 16 }}>{persona.name}</div>
-            <div style={{ fontSize: 12, color: "#ffffff50" }}>{persona.segment} · Auto Interview</div>
-          </div>
-          <button onClick={onClose} style={{ marginLeft: "auto", background: "none", border: "none", color: "#ffffff40", cursor: "pointer", fontSize: 20 }}>✕</button>
-        </div>
-
-        {loading && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-            {[...Array(5)].map((_, i) => <div key={i} style={{ height: 60, background: "#ffffff08", borderRadius: 10, animation: "pulse 1.5s ease infinite" }} />)}
-          </div>
-        )}
-        {error && <div style={{ color: "#F07070", fontSize: 14, padding: "12px 16px", background: "#F0707015", borderRadius: 10 }}>⚠ {error}</div>}
-        {qa && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-            {qa.map((item, i) => (
-              <div key={i}>
-                <div style={{ fontSize: 12, color: "#E8C547", fontFamily: "'DM Sans', sans-serif", fontWeight: 600, marginBottom: 6 }}>Q: {item.question}</div>
-                <div style={{ fontSize: 14, color: "#e8e8f0", fontFamily: "'Lora', serif", fontStyle: "italic", lineHeight: 1.6, paddingLeft: 12, borderLeft: `2px solid ${color}40` }}>"{item.answer}"</div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
     </div>
   );
 }
@@ -189,7 +137,6 @@ function LiveChatModal({ persona, sessionId, onClose }) {
 
 function PersonaCard({ persona, index, sessionId }) {
   const [expanded, setExpanded] = useState(false);
-  const [showInterview, setShowInterview] = useState(false);
   const [showChat, setShowChat] = useState(false);
   const color = persona.color || AVATAR_COLORS[persona.id % AVATAR_COLORS.length];
 
@@ -239,15 +186,6 @@ function PersonaCard({ persona, index, sessionId }) {
 
             {sessionId && (
               <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
-                <button onClick={() => setShowInterview(true)} style={{
-                  fontSize: 11, padding: "4px 12px", borderRadius: 8,
-                  background: "none", border: "1px solid #ffffff15", color: "#ffffff50",
-                  cursor: "pointer", fontFamily: "'DM Sans', sans-serif", transition: "all 0.2s",
-                }}
-                  onMouseEnter={e => { e.currentTarget.style.borderColor = "#E8C547"; e.currentTarget.style.color = "#E8C547"; }}
-                  onMouseLeave={e => { e.currentTarget.style.borderColor = "#ffffff15"; e.currentTarget.style.color = "#ffffff50"; }}
-                >📋 Auto Q&A</button>
-
                 <button onClick={() => setShowChat(true)} style={{
                   fontSize: 11, padding: "4px 12px", borderRadius: 8,
                   background: "none", border: `1px solid ${color}40`, color: color,
@@ -262,7 +200,6 @@ function PersonaCard({ persona, index, sessionId }) {
         </div>
       </div>
 
-      {showInterview && <AutoInterviewModal persona={persona} sessionId={sessionId} onClose={() => setShowInterview(false)} />}
       {showChat && <LiveChatModal persona={persona} sessionId={sessionId} onClose={() => setShowChat(false)} />}
     </>
   );
