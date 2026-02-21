@@ -84,3 +84,28 @@ async def generate_auto_interview(persona: dict, product_context: str) -> list:
         for question in AUTO_INTERVIEW_QUESTIONS
     ]
     return await asyncio.gather(*tasks)
+
+
+async def chat_with_persona(
+    persona: dict,
+    product_context: str,
+    conversation_history: list,
+    user_message: str,
+) -> str:
+    """
+    Live chat: user sends a message to a specific persona.
+    conversation_history is a list of {role, content} dicts.
+    Returns the persona's reply as a string.
+    """
+    messages = [{"role": "system", "content": build_persona_system_prompt(persona, product_context)}]
+    messages.extend(conversation_history)
+    messages.append({"role": "user", "content": user_message})
+
+    response = await client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=messages,
+        temperature=0.85,
+        max_tokens=200,
+    )
+
+    return response.choices[0].message.content.strip()

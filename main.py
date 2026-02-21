@@ -5,12 +5,13 @@ import io
 from fastapi import FastAPI, Form, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 from dotenv import load_dotenv
 import PyPDF2
 import docx
 from browser_agent import browse_product_url, format_browser_context
 from research_agent import research_competitive_landscape, generate_persona_with_research
-from interview_agent import generate_auto_interview
+from interview_agent import generate_auto_interview, chat_with_persona
 
 load_dotenv()
 
@@ -25,8 +26,6 @@ app.add_middleware(
 )
 
 # ─── In-memory session store ───────────────────────────────────────────────────
-# Holds persona data and product context between requests
-# so the interview feature can reference them later
 _persona_store: dict = {}
 _product_context_store: dict = {}
 
@@ -90,12 +89,6 @@ async def run_pipeline(
     start_index: int = 0,
     session_id: str = None,
 ) -> list:
-    """
-    Full pipeline:
-    1. Research competitive landscape (one OpenAI call)
-    2. Generate all personas concurrently with competitive context baked in
-    3. Store personas in memory for interview feature
-    """
     names = random.sample(PERSONA_NAMES, min(count, len(PERSONA_NAMES)))
     if count > len(names):
         names += random.choices(PERSONA_NAMES, k=count - len(names))
@@ -128,7 +121,6 @@ async def run_pipeline(
         if isinstance(r, Exception):
             print(f"Persona {start_index + i} failed: {r}")
         else:
-            # Store each persona for interview access
             if session_id:
                 _persona_store[f"{session_id}_{r['id']}"] = r
             personas.append(r)
@@ -153,7 +145,6 @@ async def generate_from_text(
 ):
     if not text.strip():
         return JSONResponse(status_code=400, content={"error": "Text input is required."})
-
     session_id = make_session_id(name, email)
     _product_context_store[session_id] = text
     personas = await run_pipeline(text, count=count, start_index=start_index, session_id=session_id)
@@ -178,16 +169,10 @@ async def generate_from_file(
     elif filename.endswith(".txt"):
         text = file_bytes.decode("utf-8", errors="ignore")
     else:
-        return JSONResponse(
-            status_code=400,
-            content={"error": "Unsupported file type. Please upload a PDF, DOCX, or TXT file."}
-        )
+        return JSONResponse(status_code=400, content={"error": "Unsupported file type. Please upload a PDF, DOCX, or TXT file."})
 
     if not text.strip():
-        return JSONResponse(
-            status_code=400,
-            content={"error": "Could not extract any text from this file."}
-        )
+        return JSONResponse(status_code=400, content={"error": "Could not extract any text from this file."})
 
     session_id = make_session_id(name, email)
     _product_context_store[session_id] = text
@@ -206,16 +191,10 @@ async def generate_from_url(
     try:
         browse_result = await browse_product_url(url)
     except Exception as e:
-        return JSONResponse(
-            status_code=400,
-            content={"error": f"Browser agent failed: {str(e)}"}
-        )
+        return JSONResponse(status_code=400, content={"error": f"Browser agent failed: {str(e)}"})
 
     if not browse_result.get("full_text_summary", "").strip():
-        return JSONResponse(
-            status_code=400,
-            content={"error": "No readable content found at that URL."}
-        )
+        return JSONResponse(status_code=400, content={"error": "No readable content found at that URL."})
 
     product_context = format_browser_context(browse_result)
     session_id = make_session_id(name, email)
@@ -240,22 +219,45 @@ async def auto_interview(
     session_id: str = Form(...),
     persona_id: int = Form(...),
 ):
-    """Generate a 5-question auto interview for a specific persona."""
     key = f"{session_id}_{persona_id}"
     persona = _persona_store.get(key)
     product_context = _product_context_store.get(session_id)
 
     if not persona:
-        raise HTTPException(status_code=404, detail="Persona not found. Make sure session_id and persona_id are correct.")
+        raise HTTPException(status_code=404, detail="Persona not found.")
     if not product_context:
         raise HTTPException(status_code=404, detail="Session not found.")
 
     qa_pairs = await generate_auto_interview(persona, product_context)
-    return {
-        "persona_id": persona_id,
-        "persona_name": persona["name"],
-        "qa": qa_pairs,
-    }
+    return {"persona_id": persona_id, "persona_name": persona["name"], "qa": qa_pairs}
+
+
+class ChatMessage(BaseModel):
+    session_id: str
+    persona_id: int
+    message: str
+    history: list = []
+
+
+@app.post("/interview/chat")
+async def chat_interview(body: ChatMessage):
+    key = f"{body.session_id}_{body.persona_id}"
+    persona = _persona_store.get(key)
+    product_context = _product_context_store.get(body.session_id)
+
+    if not persona:
+        raise HTTPException(status_code=404, detail="Persona not found.")
+    if not product_context:
+        raise HTTPException(status_code=404, detail="Session not found.")
+
+    reply = await chat_with_persona(
+        persona=persona,
+        product_context=product_context,
+        conversation_history=body.history,
+        user_message=body.message,
+    )
+
+    return {"persona_id": body.persona_id, "persona_name": persona["name"], "reply": reply}
 
 
 # ─── Run ──────────────────────────────────────────────────────────────────────
