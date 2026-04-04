@@ -2,13 +2,15 @@ import os
 import asyncio
 import random
 import io
-from fastapi import FastAPI, Form, UploadFile, File, HTTPException
+from fastapi import FastAPI, Form, UploadFile, File, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from dotenv import load_dotenv
 import PyPDF2
 import docx
+import jwt
 from browser_agent import browse_product_url, format_browser_context
 from research_agent import research_competitive_landscape, generate_persona_with_research
 from interview_agent import chat_with_persona
@@ -24,6 +26,27 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ─── Auth ──────────────────────────────────────────────────────────────────────
+
+_bearer = HTTPBearer()
+SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET")
+
+
+def verify_token(credentials: HTTPAuthorizationCredentials = Depends(_bearer)) -> dict:
+    token = credentials.credentials
+    try:
+        payload = jwt.decode(
+            token,
+            SUPABASE_JWT_SECRET,
+            algorithms=["HS256"],
+            options={"verify_aud": False},
+        )
+        return payload
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired.")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid token.")
 
 # ─── In-memory session store ───────────────────────────────────────────────────
 _persona_store: dict = {}
@@ -78,9 +101,6 @@ def extract_text_from_docx(file_bytes: bytes) -> str:
     document = docx.Document(io.BytesIO(file_bytes))
     return "\n".join(p.text for p in document.paragraphs)
 
-
-def make_session_id(name: str, email: str) -> str:
-    return f"{name.lower().replace(' ', '_')}_{email.lower().split('@')[0]}"
 
 
 async def run_pipeline(
@@ -137,15 +157,14 @@ async def root():
 
 @app.post("/generate")
 async def generate_from_text(
-    name: str = Form(...),
-    email: str = Form(...),
     text: str = Form(...),
     count: int = Form(20),
     start_index: int = Form(0),
+    user: dict = Depends(verify_token),
 ):
     if not text.strip():
         return JSONResponse(status_code=400, content={"error": "Text input is required."})
-    session_id = make_session_id(name, email)
+    session_id = user["sub"]
     _product_context_store[session_id] = text
     personas = await run_pipeline(text, count=count, start_index=start_index, session_id=session_id)
     return {"personas": personas, "total": len(personas), "session_id": session_id}
@@ -153,11 +172,10 @@ async def generate_from_text(
 
 @app.post("/generate-from-file")
 async def generate_from_file(
-    name: str = Form(...),
-    email: str = Form(...),
     file: UploadFile = File(...),
     count: int = Form(20),
     start_index: int = Form(0),
+    user: dict = Depends(verify_token),
 ):
     file_bytes = await file.read()
     filename = file.filename.lower()
@@ -174,7 +192,7 @@ async def generate_from_file(
     if not text.strip():
         return JSONResponse(status_code=400, content={"error": "Could not extract any text from this file."})
 
-    session_id = make_session_id(name, email)
+    session_id = user["sub"]
     _product_context_store[session_id] = text
     personas = await run_pipeline(text, count=count, start_index=start_index, session_id=session_id)
     return {"personas": personas, "total": len(personas), "session_id": session_id}
@@ -182,11 +200,10 @@ async def generate_from_file(
 
 @app.post("/generate-from-url")
 async def generate_from_url(
-    name: str = Form(...),
-    email: str = Form(...),
     url: str = Form(...),
     count: int = Form(20),
     start_index: int = Form(0),
+    user: dict = Depends(verify_token),
 ):
     try:
         browse_result = await browse_product_url(url)
@@ -197,7 +214,7 @@ async def generate_from_url(
         return JSONResponse(status_code=400, content={"error": "No readable content found at that URL."})
 
     product_context = format_browser_context(browse_result)
-    session_id = make_session_id(name, email)
+    session_id = user["sub"]
     _product_context_store[session_id] = product_context
     personas = await run_pipeline(product_context, count=count, start_index=start_index, session_id=session_id)
 
@@ -222,7 +239,7 @@ class ChatMessage(BaseModel):
 
 
 @app.post("/interview/chat")
-async def chat_interview(body: ChatMessage):
+async def chat_interview(body: ChatMessage, _user: dict = Depends(verify_token)):
     key = f"{body.session_id}_{body.persona_id}"
     persona = _persona_store.get(key)
     product_context = _product_context_store.get(body.session_id)

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { supabase } from "./supabase";
 
 const API_BASE = "http://localhost:8000";
 
@@ -225,8 +226,8 @@ function LoadingSkeletons({ count = 5 }) {
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
 
-export default function EvolveAI() {
-  const [form, setForm] = useState({ name: "", email: "", inputType: "text", text: "", link: "" });
+export default function EvolveAI({ session }) {
+  const [form, setForm] = useState({ inputType: "text", text: "", link: "" });
   const [file, setFile] = useState(null);
   const [personas, setPersonas] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -237,10 +238,13 @@ export default function EvolveAI() {
 
   const inputStyle = { width: "100%", background: "#080818", border: "1px solid #ffffff15", borderRadius: 10, padding: "12px 14px", color: "#ffffff", fontSize: 14, fontFamily: "'DM Sans', sans-serif", transition: "border-color 0.2s" };
 
+  const getAuthHeaders = async () => {
+    const { data: { session: current } } = await supabase.auth.getSession();
+    return { Authorization: `Bearer ${current.access_token}` };
+  };
+
   const buildFormData = (extra = {}) => {
     const fd = new FormData();
-    fd.append("name", form.name);
-    fd.append("email", form.email);
     Object.entries(extra).forEach(([k, v]) => fd.append(k, v));
     return fd;
   };
@@ -249,15 +253,16 @@ export default function EvolveAI() {
     setError(null);
     setLoading(true);
     try {
+      const headers = await getAuthHeaders();
       let res;
       if (form.inputType === "text") {
-        res = await fetch(`${API_BASE}/generate`, { method: "POST", body: buildFormData({ text: form.text, count: 20, start_index: 0 }) });
+        res = await fetch(`${API_BASE}/generate`, { method: "POST", headers, body: buildFormData({ text: form.text, count: 20, start_index: 0 }) });
       } else if (form.inputType === "file" && file) {
         const fd = buildFormData({ count: 20, start_index: 0 });
         fd.append("file", file);
-        res = await fetch(`${API_BASE}/generate-from-file`, { method: "POST", body: fd });
+        res = await fetch(`${API_BASE}/generate-from-file`, { method: "POST", headers, body: fd });
       } else if (form.inputType === "link") {
-        res = await fetch(`${API_BASE}/generate-from-url`, { method: "POST", body: buildFormData({ url: form.link, count: 20, start_index: 0 }) });
+        res = await fetch(`${API_BASE}/generate-from-url`, { method: "POST", headers, body: buildFormData({ url: form.link, count: 20, start_index: 0 }) });
       }
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Something went wrong");
@@ -275,16 +280,17 @@ export default function EvolveAI() {
     setError(null);
     setGenerating(true);
     try {
+      const headers = await getAuthHeaders();
       const startIndex = personas.length;
       let res;
       if (form.inputType === "text") {
-        res = await fetch(`${API_BASE}/generate`, { method: "POST", body: buildFormData({ text: form.text, count: 10, start_index: startIndex }) });
+        res = await fetch(`${API_BASE}/generate`, { method: "POST", headers, body: buildFormData({ text: form.text, count: 10, start_index: startIndex }) });
       } else if (form.inputType === "file" && file) {
         const fd = buildFormData({ count: 10, start_index: startIndex });
         fd.append("file", file);
-        res = await fetch(`${API_BASE}/generate-from-file`, { method: "POST", body: fd });
+        res = await fetch(`${API_BASE}/generate-from-file`, { method: "POST", headers, body: fd });
       } else if (form.inputType === "link") {
-        res = await fetch(`${API_BASE}/generate-from-url`, { method: "POST", body: buildFormData({ url: form.link, count: 10, start_index: startIndex }) });
+        res = await fetch(`${API_BASE}/generate-from-url`, { method: "POST", headers, body: buildFormData({ url: form.link, count: 10, start_index: startIndex }) });
       }
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Something went wrong");
@@ -296,7 +302,7 @@ export default function EvolveAI() {
     }
   };
 
-  const canSubmit = form.name && form.email && (
+  const canSubmit = (
     (form.inputType === "text" && form.text.trim()) ||
     (form.inputType === "file" && file) ||
     (form.inputType === "link" && form.link.trim())
@@ -328,6 +334,15 @@ export default function EvolveAI() {
             <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
               <div style={{ width: 36, height: 36, borderRadius: 10, background: "linear-gradient(135deg, #E8C547, #F07B54)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>⚡</div>
               <span style={{ fontFamily: "'Space Mono', monospace", fontSize: 18, fontWeight: 700, color: "#ffffff", letterSpacing: "0.05em" }}>Evolve AI</span>
+              <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12 }}>
+                <span style={{ fontSize: 12, color: "#ffffff30", fontFamily: "'DM Sans', sans-serif" }}>{session.user.email}</span>
+                <button
+                  onClick={() => supabase.auth.signOut()}
+                  style={{ padding: "6px 14px", background: "none", border: "1px solid #ffffff15", borderRadius: 8, color: "#ffffff40", cursor: "pointer", fontSize: 12, fontFamily: "'DM Sans', sans-serif", transition: "all 0.2s" }}
+                  onMouseEnter={e => { e.currentTarget.style.borderColor = "#ffffff30"; e.currentTarget.style.color = "#ffffff70"; }}
+                  onMouseLeave={e => { e.currentTarget.style.borderColor = "#ffffff15"; e.currentTarget.style.color = "#ffffff40"; }}
+                >Sign out</button>
+              </div>
             </div>
             <h1 style={{ fontFamily: "'Lora', serif", fontSize: 36, fontWeight: 600, color: "#ffffff", lineHeight: 1.2, marginBottom: 12 }}>
               Simulate your customers<br /><span style={{ color: "#E8C547" }}>before launch day.</span>
@@ -340,17 +355,6 @@ export default function EvolveAI() {
           {/* Form */}
           {!submitted && (
             <div style={{ background: "#0e0e22", border: "1px solid #ffffff10", borderRadius: 20, padding: "36px 36px 32px", marginBottom: 40, animation: "fadeSlideUp 0.5s ease 0.1s both" }}>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 20 }}>
-                <div>
-                  <label style={{ display: "block", fontSize: 12, color: "#ffffff50", marginBottom: 8, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase" }}>Full Name</label>
-                  <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="Jane Smith" style={inputStyle} />
-                </div>
-                <div>
-                  <label style={{ display: "block", fontSize: 12, color: "#ffffff50", marginBottom: 8, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase" }}>Email</label>
-                  <input type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} placeholder="jane@company.com" style={inputStyle} />
-                </div>
-              </div>
-
               <div style={{ marginBottom: 16 }}>
                 <label style={{ display: "block", fontSize: 12, color: "#ffffff50", marginBottom: 10, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase" }}>Product Input</label>
                 <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
