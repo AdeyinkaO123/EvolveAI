@@ -235,6 +235,42 @@ export default function EvolveAI({ session }) {
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState(null);
   const [sessionId, setSessionId] = useState(null);
+  const [dbSessionId, setDbSessionId] = useState(null);
+  const [history, setHistory] = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(true);
+
+  useEffect(() => { fetchHistory(); }, []);
+
+  const fetchHistory = async () => {
+    try {
+      const headers = await getAuthHeaders();
+      const res = await fetch(`${API_BASE}/sessions`, { headers });
+      if (res.ok) {
+        const data = await res.json();
+        setHistory(data.sessions);
+      }
+    } catch {}
+    finally { setHistoryLoading(false); }
+  };
+
+  const loadSession = async (dbSid) => {
+    setError(null);
+    setLoading(true);
+    try {
+      const headers = await getAuthHeaders();
+      const res = await fetch(`${API_BASE}/sessions/${dbSid}`, { headers });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Failed to load session.");
+      setPersonas(data.personas);
+      setSessionId(data.session_id);
+      setDbSessionId(data.db_session_id);
+      setSubmitted(true);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const inputStyle = { width: "100%", background: "#080818", border: "1px solid #ffffff15", borderRadius: 10, padding: "12px 14px", color: "#ffffff", fontSize: 14, fontFamily: "'DM Sans', sans-serif", transition: "border-color 0.2s" };
 
@@ -268,7 +304,9 @@ export default function EvolveAI({ session }) {
       if (!res.ok) throw new Error(data.error || "Something went wrong");
       setPersonas(data.personas);
       setSessionId(data.session_id);
+      setDbSessionId(data.db_session_id);
       setSubmitted(true);
+      fetchHistory();
     } catch (e) {
       setError(e.message);
     } finally {
@@ -282,15 +320,16 @@ export default function EvolveAI({ session }) {
     try {
       const headers = await getAuthHeaders();
       const startIndex = personas.length;
+      const extra = dbSessionId ? { db_session_id: dbSessionId } : {};
       let res;
       if (form.inputType === "text") {
-        res = await fetch(`${API_BASE}/generate`, { method: "POST", headers, body: buildFormData({ text: form.text, count: 10, start_index: startIndex }) });
+        res = await fetch(`${API_BASE}/generate`, { method: "POST", headers, body: buildFormData({ text: form.text, count: 10, start_index: startIndex, ...extra }) });
       } else if (form.inputType === "file" && file) {
-        const fd = buildFormData({ count: 10, start_index: startIndex });
+        const fd = buildFormData({ count: 10, start_index: startIndex, ...extra });
         fd.append("file", file);
         res = await fetch(`${API_BASE}/generate-from-file`, { method: "POST", headers, body: fd });
       } else if (form.inputType === "link") {
-        res = await fetch(`${API_BASE}/generate-from-url`, { method: "POST", headers, body: buildFormData({ url: form.link, count: 10, start_index: startIndex }) });
+        res = await fetch(`${API_BASE}/generate-from-url`, { method: "POST", headers, body: buildFormData({ url: form.link, count: 10, start_index: startIndex, ...extra }) });
       }
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Something went wrong");
@@ -351,6 +390,55 @@ export default function EvolveAI({ session }) {
               Upload your product description, file, or link. Evolve AI generates 20+ realistic customer personas who review, critique, and answer your questions — before the world sees it.
             </p>
           </div>
+
+          {/* Previous Submissions */}
+          {!submitted && (historyLoading || history.length > 0) && (
+            <div style={{ marginBottom: 28, animation: "fadeSlideUp 0.5s ease 0.05s both" }}>
+              <div style={{ fontSize: 12, color: "#ffffff30", fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 12 }}>
+                Previous Submissions
+              </div>
+              {historyLoading ? (
+                <div style={{ display: "flex", gap: 10 }}>
+                  {[1, 2].map(i => (
+                    <div key={i} style={{ height: 52, flex: 1, borderRadius: 12, background: "#0e0e22", border: "1px solid #ffffff08", animation: "pulse 1.5s ease infinite" }} />
+                  ))}
+                </div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {history.map(s => (
+                    <button
+                      key={s.id}
+                      onClick={() => loadSession(s.id)}
+                      style={{
+                        width: "100%", textAlign: "left", background: "#0e0e22",
+                        border: "1px solid #ffffff0f", borderRadius: 12,
+                        padding: "12px 16px", cursor: "pointer",
+                        display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
+                        transition: "border-color 0.2s, background 0.2s",
+                      }}
+                      onMouseEnter={e => { e.currentTarget.style.borderColor = "#E8C54740"; e.currentTarget.style.background = "#12122a"; }}
+                      onMouseLeave={e => { e.currentTarget.style.borderColor = "#ffffff0f"; e.currentTarget.style.background = "#0e0e22"; }}
+                    >
+                      <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+                        <span style={{ fontSize: 16, flexShrink: 0 }}>
+                          {s.input_type === "url" ? "🌐" : s.input_type === "file" ? "📎" : "📝"}
+                        </span>
+                        <span style={{
+                          fontSize: 13, color: "#e8e8f0", fontFamily: "'DM Sans', sans-serif",
+                          whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                        }}>
+                          {s.title || "Untitled submission"}
+                        </span>
+                      </div>
+                      <span style={{ fontSize: 11, color: "#ffffff30", flexShrink: 0 }}>
+                        {new Date(s.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Form */}
           {!submitted && (
@@ -421,7 +509,7 @@ export default function EvolveAI({ session }) {
                   <h2 style={{ fontFamily: "'Lora', serif", fontSize: 22, color: "#ffffff", marginBottom: 4 }}>{personas.length} Customer Personas</h2>
                   <p style={{ fontSize: 13, color: "#ffffff40" }}>📋 Auto Q&A or 💬 Live Chat with any persona</p>
                 </div>
-                <button onClick={() => { setSubmitted(false); setPersonas([]); setError(null); setSessionId(null); }} style={{
+                <button onClick={() => { setSubmitted(false); setPersonas([]); setError(null); setSessionId(null); setDbSessionId(null); }} style={{
                   padding: "8px 16px", background: "none", border: "1px solid #ffffff15",
                   borderRadius: 8, color: "#ffffff50", cursor: "pointer", fontSize: 13, fontFamily: "'DM Sans', sans-serif",
                 }}>← New Input</button>

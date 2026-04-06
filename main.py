@@ -2,6 +2,7 @@ import os
 import asyncio
 import random
 import io
+import uuid as uuid_lib
 from fastapi import FastAPI, Form, UploadFile, File, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -10,7 +11,7 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 import PyPDF2
 import docx
-import jwt
+from supabase import create_client, Client
 from browser_agent import browse_product_url, format_browser_context
 from research_agent import research_competitive_landscape, generate_persona_with_research
 from interview_agent import chat_with_persona
@@ -30,25 +31,53 @@ app.add_middleware(
 # ─── Auth ──────────────────────────────────────────────────────────────────────
 
 _bearer = HTTPBearer()
-SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET")
 
 
 def verify_token(credentials: HTTPAuthorizationCredentials = Depends(_bearer)) -> dict:
     token = credentials.credentials
     try:
-        payload = jwt.decode(
-            token,
-            SUPABASE_JWT_SECRET,
-            algorithms=["HS256"],
-            options={"verify_aud": False},
-        )
-        return payload
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Token expired.")
-    except jwt.InvalidTokenError:
+        response = _db.auth.get_user(token)
+        user = response.user
+        if not user:
+            raise HTTPException(status_code=401, detail="Invalid token.")
+        return {"sub": str(user.id), "email": user.email}
+    except HTTPException:
+        raise
+    except Exception:
         raise HTTPException(status_code=401, detail="Invalid token.")
 
-# ─── In-memory session store ───────────────────────────────────────────────────
+
+# ─── Supabase DB client (service role — server-side only) ─────────────────────
+
+_db: Client = create_client(
+    os.getenv("SUPABASE_URL"),
+    os.getenv("SUPABASE_SERVICE_ROLE_KEY"),
+)
+
+
+def _save_session(
+    user_id: str,
+    input_type: str,
+    product_text: str,
+    personas: list,
+    db_session_id: str = None,
+) -> str:
+    """Persist a generation run. If db_session_id is given, append personas to it."""
+    sid = db_session_id or str(uuid_lib.uuid4())
+    if not db_session_id:
+        _db.table("sessions").insert({
+            "id": sid,
+            "user_id": user_id,
+            "input_type": input_type,
+            "product_text": product_text,
+        }).execute()
+    _db.table("personas").insert([
+        {"session_id": sid, "persona_data": p} for p in personas
+    ]).execute()
+    return sid
+
+
+# ─── In-memory session store (for live chat within a server session) ───────────
 _persona_store: dict = {}
 _product_context_store: dict = {}
 
@@ -100,7 +129,6 @@ def extract_text_from_pdf(file_bytes: bytes) -> str:
 def extract_text_from_docx(file_bytes: bytes) -> str:
     document = docx.Document(io.BytesIO(file_bytes))
     return "\n".join(p.text for p in document.paragraphs)
-
 
 
 async def run_pipeline(
@@ -160,6 +188,7 @@ async def generate_from_text(
     text: str = Form(...),
     count: int = Form(20),
     start_index: int = Form(0),
+    db_session_id: str = Form(None),
     user: dict = Depends(verify_token),
 ):
     if not text.strip():
@@ -167,7 +196,8 @@ async def generate_from_text(
     session_id = user["sub"]
     _product_context_store[session_id] = text
     personas = await run_pipeline(text, count=count, start_index=start_index, session_id=session_id)
-    return {"personas": personas, "total": len(personas), "session_id": session_id}
+    sid = await asyncio.to_thread(_save_session, user["sub"], "text", text, personas, db_session_id or None)
+    return {"personas": personas, "total": len(personas), "session_id": session_id, "db_session_id": sid}
 
 
 @app.post("/generate-from-file")
@@ -175,6 +205,7 @@ async def generate_from_file(
     file: UploadFile = File(...),
     count: int = Form(20),
     start_index: int = Form(0),
+    db_session_id: str = Form(None),
     user: dict = Depends(verify_token),
 ):
     file_bytes = await file.read()
@@ -195,7 +226,8 @@ async def generate_from_file(
     session_id = user["sub"]
     _product_context_store[session_id] = text
     personas = await run_pipeline(text, count=count, start_index=start_index, session_id=session_id)
-    return {"personas": personas, "total": len(personas), "session_id": session_id}
+    sid = await asyncio.to_thread(_save_session, user["sub"], "file", text, personas, db_session_id or None)
+    return {"personas": personas, "total": len(personas), "session_id": session_id, "db_session_id": sid}
 
 
 @app.post("/generate-from-url")
@@ -203,6 +235,7 @@ async def generate_from_url(
     url: str = Form(...),
     count: int = Form(20),
     start_index: int = Form(0),
+    db_session_id: str = Form(None),
     user: dict = Depends(verify_token),
 ):
     try:
@@ -217,11 +250,13 @@ async def generate_from_url(
     session_id = user["sub"]
     _product_context_store[session_id] = product_context
     personas = await run_pipeline(product_context, count=count, start_index=start_index, session_id=session_id)
+    sid = await asyncio.to_thread(_save_session, user["sub"], "url", product_context, personas, db_session_id or None)
 
     return {
         "personas": personas,
         "total": len(personas),
         "session_id": session_id,
+        "db_session_id": sid,
         "browse_summary": {
             "headlines": browse_result.get("headlines", [])[:5],
             "ctas": browse_result.get("ctas", [])[:5],
@@ -257,6 +292,49 @@ async def chat_interview(body: ChatMessage, _user: dict = Depends(verify_token))
     )
 
     return {"persona_id": body.persona_id, "persona_name": persona["name"], "reply": reply}
+
+
+# ─── History endpoints ────────────────────────────────────────────────────────
+
+@app.get("/sessions")
+async def get_sessions(user: dict = Depends(verify_token)):
+    result = _db.table("sessions").select(
+        "id, input_type, product_text, created_at"
+    ).eq("user_id", user["sub"]).order("created_at", desc=True).limit(20).execute()
+
+    return {"sessions": [
+        {
+            "id": s["id"],
+            "input_type": s["input_type"],
+            "title": (s.get("product_text") or "")[:80].strip(),
+            "created_at": s["created_at"],
+        }
+        for s in result.data
+    ]}
+
+
+@app.get("/sessions/{db_session_id}")
+async def load_session(db_session_id: str, user: dict = Depends(verify_token)):
+    session_res = _db.table("sessions").select("*").eq(
+        "id", db_session_id
+    ).eq("user_id", user["sub"]).maybe_single().execute()
+
+    if not session_res.data:
+        raise HTTPException(status_code=404, detail="Session not found.")
+
+    session = session_res.data
+    personas_res = _db.table("personas").select("persona_data").eq(
+        "session_id", db_session_id
+    ).execute()
+    personas = [row["persona_data"] for row in personas_res.data]
+
+    # Restore in-memory state so live chat works immediately
+    uid = user["sub"]
+    _product_context_store[uid] = session["product_text"]
+    for p in personas:
+        _persona_store[f"{uid}_{p['id']}"] = p
+
+    return {"personas": personas, "session_id": uid, "db_session_id": db_session_id}
 
 
 # ─── Run ──────────────────────────────────────────────────────────────────────
