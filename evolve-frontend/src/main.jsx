@@ -1,26 +1,34 @@
 import { useState, useEffect } from "react";
 import ReactDOM from "react-dom/client";
 import { supabase } from "./supabase";
+import LandingPage from "./LandingPage";
 import AuthPage from "./AuthPage";
 import EvolveAI from "./EvolveAI";
 
 function App() {
   const [session, setSession] = useState(undefined); // undefined = loading
+  const [page, setPage] = useState("landing"); // "landing" | "auth" | "app"
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
+      if (session) setPage("app");
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
+      if (session) {
+        setPage("app");
+      } else if (page === "app") {
+        // Signed out — return to landing
+        setPage("landing");
+      }
     });
 
     return () => subscription.unsubscribe();
   }, []);
 
   if (session === undefined) {
-    // Brief loading state while Supabase checks the existing session
     return (
       <div style={{ minHeight: "100vh", background: "#080818", display: "flex", alignItems: "center", justifyContent: "center" }}>
         <div style={{ width: 28, height: 28, border: "2px solid #ffffff15", borderTopColor: "#E8C547", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
@@ -29,8 +37,9 @@ function App() {
     );
   }
 
-  if (!session) return <AuthPage />;
-  return <EvolveAI session={session} />;
+  if (session && page === "app") return <EvolveAI session={session} />;
+  if (page === "auth") return <AuthPage onBack={() => setPage("landing")} />;
+  return <LandingPage onGetStarted={() => setPage("auth")} />;
 }
 
 ReactDOM.createRoot(document.getElementById("root")).render(<App />);

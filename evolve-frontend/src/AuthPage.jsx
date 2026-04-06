@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { supabase } from "./supabase";
 
-export default function AuthPage() {
+export default function AuthPage({ onBack }) {
   const [mode, setMode] = useState("login"); // "login" | "signup"
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -88,10 +88,18 @@ export default function AuthPage() {
 
         <div style={{ width: "100%", maxWidth: 420, animation: "fadeSlideUp 0.5s ease" }}>
 
-          {/* Logo */}
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 40, justifyContent: "center" }}>
-            <div style={{ width: 36, height: 36, borderRadius: 10, background: "linear-gradient(135deg, #E8C547, #F07B54)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>⚡</div>
-            <span style={{ fontFamily: "'Space Mono', monospace", fontSize: 18, fontWeight: 700, color: "#ffffff", letterSpacing: "0.05em" }}>Evolve AI</span>
+          {/* Logo + back */}
+          <div style={{ display: "flex", alignItems: "center", marginBottom: 40 }}>
+            {onBack && (
+              <button onClick={onBack} style={{ background: "none", border: "none", color: "#ffffff30", cursor: "pointer", fontSize: 13, fontFamily: "'DM Sans', sans-serif", padding: 0, display: "flex", alignItems: "center", gap: 6, transition: "color 0.2s" }}
+                onMouseEnter={e => e.currentTarget.style.color = "#ffffff70"}
+                onMouseLeave={e => e.currentTarget.style.color = "#ffffff30"}
+              >← Back</button>
+            )}
+            <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 10, justifyContent: "center" }}>
+              <div style={{ width: 36, height: 36, borderRadius: 10, background: "linear-gradient(135deg, #E8C547, #F07B54)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>⚡</div>
+              <span style={{ fontFamily: "'Space Mono', monospace", fontSize: 18, fontWeight: 700, color: "#ffffff", letterSpacing: "0.05em" }}>Evolve AI</span>
+            </div>
           </div>
 
           {/* Card */}

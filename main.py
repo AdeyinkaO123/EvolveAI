@@ -294,6 +294,38 @@ async def chat_interview(body: ChatMessage, _user: dict = Depends(verify_token))
     return {"persona_id": body.persona_id, "persona_name": persona["name"], "reply": reply}
 
 
+# ─── Demo endpoints (no auth, capped at 5 personas) ──────────────────────────
+
+@app.post("/demo/generate")
+async def demo_generate(text: str = Form(...)):
+    if not text.strip():
+        return JSONResponse(status_code=400, content={"error": "Text input is required."})
+    session_id = f"demo_{str(uuid_lib.uuid4())}"
+    _product_context_store[session_id] = text
+    personas = await run_pipeline(text, count=5, start_index=0, session_id=session_id)
+    return {"personas": personas, "session_id": session_id}
+
+
+@app.post("/demo/interview/chat")
+async def demo_chat(body: ChatMessage):
+    if not body.session_id.startswith("demo_"):
+        raise HTTPException(status_code=403, detail="Invalid demo session.")
+    key = f"{body.session_id}_{body.persona_id}"
+    persona = _persona_store.get(key)
+    product_context = _product_context_store.get(body.session_id)
+    if not persona:
+        raise HTTPException(status_code=404, detail="Demo session expired — please regenerate.")
+    if not product_context:
+        raise HTTPException(status_code=404, detail="Demo session expired — please regenerate.")
+    reply = await chat_with_persona(
+        persona=persona,
+        product_context=product_context,
+        conversation_history=body.history,
+        user_message=body.message,
+    )
+    return {"persona_id": body.persona_id, "persona_name": persona["name"], "reply": reply}
+
+
 # ─── History endpoints ────────────────────────────────────────────────────────
 
 @app.get("/sessions")
