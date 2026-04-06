@@ -227,6 +227,8 @@ function PreviewCard({ persona, delay = 0 }) {
 
 export default function LandingPage({ onGetStarted }) {
   const demoRef = useRef(null);
+  const howItWorksRef = useRef(null);
+  const whyUsRef = useRef(null);
   const [demoText, setDemoText] = useState("");
   const [demoLoading, setDemoLoading] = useState(false);
   const [demoPersonas, setDemoPersonas] = useState([]);
@@ -242,6 +244,8 @@ export default function LandingPage({ onGetStarted }) {
   }, []);
 
   const scrollToDemo = () => demoRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  const scrollToHowItWorks = () => howItWorksRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  const scrollToWhyUs = () => whyUsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
 
   const runDemo = async () => {
     if (!demoText.trim()) return;
@@ -298,15 +302,42 @@ export default function LandingPage({ onGetStarted }) {
             <div style={{ width: 32, height: 32, borderRadius: 8, background: "linear-gradient(135deg, #E8C547, #F07B54)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16 }}>⚡</div>
             <span style={{ fontFamily: "'Space Mono', monospace", fontSize: 16, fontWeight: 700, letterSpacing: "0.05em" }}>Evolve AI</span>
           </div>
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <button onClick={scrollToDemo} style={{ padding: "8px 16px", background: "none", border: "none", color: "#ffffff60", cursor: "pointer", fontSize: 13, fontFamily: "'DM Sans', sans-serif" }}>Try Demo</button>
-            <button onClick={onGetStarted} style={{ padding: "8px 16px", background: "none", border: "1px solid #ffffff20", borderRadius: 8, color: "#ffffff80", cursor: "pointer", fontSize: 13, fontFamily: "'DM Sans', sans-serif", transition: "all 0.2s" }}
-              onMouseEnter={e => { e.currentTarget.style.borderColor = "#ffffff40"; e.currentTarget.style.color = "#fff"; }}
-              onMouseLeave={e => { e.currentTarget.style.borderColor = "#ffffff20"; e.currentTarget.style.color = "#ffffff80"; }}
+          <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+            {[
+              { label: "How it works", onClick: scrollToHowItWorks },
+              { label: "Why us?", onClick: scrollToWhyUs },
+              { label: "Try Demo", onClick: scrollToDemo },
+            ].map(({ label, onClick }) => (
+              <button key={label} onClick={onClick} style={{
+                padding: "8px 16px", background: "none", border: "1px solid transparent",
+                borderRadius: 8, color: "#ffffff55", cursor: "pointer", fontSize: 13,
+                fontFamily: "'DM Sans', sans-serif", fontWeight: 500,
+                transition: "color 0.2s, border-color 0.2s, background 0.2s",
+              }}
+                onMouseEnter={e => {
+                  e.currentTarget.style.color = "#fff";
+                  e.currentTarget.style.background = "#ffffff08";
+                }}
+                onMouseLeave={e => {
+                  e.currentTarget.style.color = "#ffffff55";
+                  e.currentTarget.style.background = "none";
+                }}
+              >{label}</button>
+            ))}
+            <div style={{ width: 1, height: 20, background: "#ffffff15", margin: "0 8px" }} />
+            <button onClick={onGetStarted} style={{
+              padding: "8px 16px", background: "none", border: "1px solid #ffffff20",
+              borderRadius: 8, color: "#ffffff80", cursor: "pointer", fontSize: 13,
+              fontFamily: "'DM Sans', sans-serif", transition: "all 0.2s",
+            }}
+              onMouseEnter={e => { e.currentTarget.style.borderColor = "#ffffff40"; e.currentTarget.style.color = "#fff"; e.currentTarget.style.background = "#ffffff08"; }}
+              onMouseLeave={e => { e.currentTarget.style.borderColor = "#ffffff20"; e.currentTarget.style.color = "#ffffff80"; e.currentTarget.style.background = "none"; }}
             >Sign In</button>
-            <button onClick={onGetStarted} style={{ padding: "8px 20px", background: "linear-gradient(135deg, #E8C547, #F07B54)", border: "none", borderRadius: 8, color: "#1a1a2e", cursor: "pointer", fontSize: 13, fontWeight: 700, fontFamily: "'DM Sans', sans-serif" }}>
-              Get Started
-            </button>
+            <button onClick={onGetStarted} style={{
+              padding: "8px 20px", background: "linear-gradient(135deg, #E8C547, #F07B54)",
+              border: "none", borderRadius: 8, color: "#1a1a2e", cursor: "pointer",
+              fontSize: 13, fontWeight: 700, fontFamily: "'DM Sans', sans-serif",
+            }}>Get Started</button>
           </div>
         </nav>
 
@@ -382,7 +413,7 @@ export default function LandingPage({ onGetStarted }) {
         </section>
 
         {/* ── How it works ── */}
-        <section style={{ padding: "100px 32px", maxWidth: 1140, margin: "0 auto" }}>
+        <section ref={howItWorksRef} style={{ padding: "100px 32px", maxWidth: 1140, margin: "0 auto" }}>
           <div style={{ textAlign: "center", marginBottom: 64 }}>
             <div style={{ fontSize: 12, color: "#E8C547", fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 12 }}>How it works</div>
             <h2 style={{ fontFamily: "'Lora', serif", fontSize: "clamp(28px, 3vw, 42px)", fontWeight: 600, color: "#fff" }}>From idea to customer feedback<br /><span style={{ color: "#E8C547" }}>in three steps.</span></h2>
@@ -521,7 +552,7 @@ export default function LandingPage({ onGetStarted }) {
         </section>
 
         {/* ── Cost comparison ── */}
-        <section style={{ padding: "100px 32px", borderTop: "1px solid #ffffff08" }}>
+        <section ref={whyUsRef} style={{ padding: "100px 32px", borderTop: "1px solid #ffffff08" }}>
           <div style={{ maxWidth: 1140, margin: "0 auto" }}>
             <div style={{ textAlign: "center", marginBottom: 64 }}>
               <div style={{ fontSize: 12, color: "#F07B54", fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 12 }}>Why Evolve AI</div>
